@@ -1141,7 +1141,6 @@ class Transport:
         self._use_builtin_types = use_builtin_types
         self._connection = (None, None)
         self._headers = list(headers)
-        self._extra_headers = []
 
     ##
     # Send a complete request, and parse the response.
@@ -1220,19 +1219,7 @@ class Transport:
         if isinstance(host, tuple):
             host, x509 = host
 
-        auth, host = urllib.parse._splituser(host)
-
-        if auth:
-            auth = urllib.parse.unquote_to_bytes(auth)
-            auth = base64.encodebytes(auth).decode("utf-8")
-            auth = "".join(auth.split()) # get rid of whitespace
-            extra_headers = [
-                ("Authorization", "Basic " + auth)
-                ]
-        else:
-            extra_headers = []
-
-        return host, extra_headers, x509
+        return host, x509
 
     ##
     # Connect to server.
@@ -1246,7 +1233,7 @@ class Transport:
         if self._connection and host == self._connection[0]:
             return self._connection[1]
         # create a HTTP connection object from a host descriptor
-        chost, self._extra_headers, x509 = self.get_host_info(host)
+        chost, x509 = self.get_host_info(host)
         self._connection = host, http.client.HTTPConnection(chost)
         return self._connection[1]
 
@@ -1271,7 +1258,7 @@ class Transport:
 
     def send_request(self, host, handler, request_body, debug):
         connection = self.make_connection(host)
-        headers = self._headers + self._extra_headers
+        headers = self._headers
         if debug:
             connection.set_debuglevel(1)
         if self.accept_gzip_encoding and gzip:
@@ -1371,7 +1358,7 @@ class SafeTransport(Transport):
             "your version of http.client doesn't support HTTPS")
         # create a HTTPS connection object from a host descriptor
         # host may be a string, or a (host, x509-dict) tuple
-        chost, self._extra_headers, x509 = self.get_host_info(host)
+        chost, x509 = self.get_host_info(host)
         self._connection = host, http.client.HTTPSConnection(chost,
             None, context=self.context, **(x509 or {}))
         return self._connection[1]
@@ -1420,11 +1407,32 @@ class ServerProxy:
                  *, headers=(), context=None):
         # establish a "logical" server connection
 
+        def get_basic_auth_header(host):
+            auth, host = urllib.parse._splituser(host)
+            header = ()
+            if auth:
+                auth = urllib.parse.unquote_to_bytes(auth)
+                auth = base64.encodebytes(auth).decode("utf-8")
+                auth = "".join(auth.split()) # get rid of whitespace
+                header = ("Authorization", "Basic " + auth)
+
+            return host, header
+
         # get the url
-        type, uri = urllib.parse._splittype(uri)
-        if type not in ("http", "https"):
+        protocol_type, uri = urllib.parse._splittype(uri)
+        if protocol_type not in ("http", "https"):
             raise OSError("unsupported XML-RPC protocol")
-        self.__host, self.__handler = urllib.parse._splithost(uri)
+
+        # clear // on begining
+        uri = uri.lstrip('/')
+
+        host, header = get_basic_auth_header(uri)
+        if header:
+            headers = list(headers)
+            headers.append(header)
+            host = "//" + host
+
+        self.__host, self.__handler = urllib.parse._splithost(host)
         if not self.__handler:
             self.__handler = "/RPC2"
 
@@ -1507,7 +1515,9 @@ if __name__ == "__main__":
     # simple test program (from the XML-RPC specification)
 
     # local server, available from Lib/xmlrpc/server.py
-    server = ServerProxy("http://localhost:8000")
+    #server = ServerProxy("http://localhost:9001")
+    #server = ServerProxy("http://user:123@localhost:9001")
+    server = ServerProxy("http://user:12#3@127.0.0.1:9001")
 
     try:
         print(server.currentTime.getCurrentTime())
